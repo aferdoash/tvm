@@ -267,6 +267,11 @@ class MaxPool2DAttrs(Attrs):
 
 
 @register_relay_attr_node
+class MaxPool3DAttrs(Attrs):
+    """Attributes used in max_pool3d operators"""
+
+
+@register_relay_attr_node
 class AvgPool2DAttrs(Attrs):
     """Attributes used in avg_pool2d operators"""
 

@@ -274,6 +274,60 @@ def max_pool2d(data,
     return _make.max_pool2d(data, pool_size, strides, padding,
                             layout, ceil_mode)
 
+
+def max_pool3d(data,
+               pool_size=(1, 1, 1),
+               strides=(1, 1, 1),
+               padding=(0, 0, 0),
+               layout="NCDHW",
+               ceil_mode=False):
+    r"""3D maximum pooling operator.
+
+    This operator takes data as input and does 3D max value calculation
+    with in pool_size sized window by striding defined by stride
+
+
+    In the default case, where the data_layout is `NCDHW`
+    a data Tensor with shape `(batch_size, in_channels, depth, height, width)`,
+    to produce an output Tensor with the following rule:
+
+    with data of shape (b, c, d, h, w) and pool_size (kd, kh, kw)
+
+    .. math::
+
+        \mbox{out}(b, c, z, y, x)  = \max_{d=0, \ldots, kd-1} \max_{m=0, \ldots, kh-1} \max_{n=0, \ldots, kw-1}
+             \mbox{data}(b, c, \mbox{stride}[0] * z + d, \mbox{stride}[1] * y + m, \mbox{stride}[2] * x + n)
+
+    Padding is applied to data before the computation.
+    ceil_mode is used to take ceil or floor while computing out shape.
+    This operator accepts data layout specification.
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input data to the operator.
+
+    strides : tuple of int, optional
+        The strides of pooling.
+
+    padding : tuple of int, optional
+        The padding for pooling.
+
+    layout : str, optional
+        Layout of the input.
+
+    ceil_mode : bool, optional
+        To enable or disable ceil while pooling.
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.max_pool3d(data, pool_size, strides, padding,
+                            layout, ceil_mode)
+
+
 def avg_pool2d(data,
                pool_size=(1, 1),
                strides=(1, 1),

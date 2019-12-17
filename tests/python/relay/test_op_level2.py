@@ -338,6 +338,28 @@ def _test_pool2d(opfunc, reffunc):
         op_res1 = intrp1.evaluate(func)(data)
         tvm.testing.assert_allclose(op_res1.asnumpy(), ref_res, rtol=1e-5, atol=1e-5)
 
+def _test_pool3d(opfunc, reffunc):
+    print("1111111111111")
+    n, c, d, h, w = tvm.var("n"), 10, 20, 224, 224
+    x = relay.var("x", relay.TensorType((n, c, d, h, w), "float32"))
+    y = opfunc(x, pool_size=(1, 1, 1))
+    assert "pool_size=" in y.astext()
+    yy = run_infer_type(y)
+    assert yy.checked_type == relay.TensorType((n, 10, 20, 224, 224), "float32")
+    print("2222222222222222222")
+    # test execution
+    dtype = "float32"
+    dshape = (1, 3, 4, 28, 28)
+    x = relay.var("x", shape=dshape)
+    y = opfunc(x, pool_size=(2, 2, 2), strides=(2, 2, 2), padding=(0, 0, 0))
+    func = relay.Function([x], y)
+    data = np.random.uniform(size=dshape).astype(dtype)
+    ref_res = reffunc(data.reshape(1,3,2,2,14,2,14,2), axis=(3,5,7))
+    for target, ctx in ctx_list():
+        intrp1 = relay.create_executor("graph", ctx=ctx, target=target)
+        op_res1 = intrp1.evaluate(func)(data)
+        tvm.testing.assert_allclose(op_res1.asnumpy(), ref_res, rtol=1e-5, atol=1e-5)
+
 def _test_pool2d_int(opfunc, reffunc, dtype):
     n, c, h, w = tvm.var("n"), 10, 224, 224
     x = relay.var("x", relay.TensorType((n, c, h, w), dtype))
@@ -392,6 +414,8 @@ def test_pool2d():
     _test_global_pool2d(relay.nn.global_max_pool2d, np.max)
     _test_global_pool2d(relay.nn.global_avg_pool2d, np.mean)
 
+def test_pool3d():
+    _test_pool3d(relay.nn.max_pool3d, np.max)
 
 def test_avg_pool2d_no_count_pad():
     kh, kw = (4, 4)
@@ -760,21 +784,22 @@ def test_bitpack_infer_type():
 
 
 if __name__ == "__main__":
-    test_pool2d()
-    test_avg_pool2d_no_count_pad()
-    test_lrn()
-    test_l2_normalize()
-    test_conv2d_infer_type()
-    test_bitpack_infer_type()
-    test_upsampling_infer_type()
-    test_flatten_infer_type()
-    test_pad_infer_type()
-    test_pad_run()
-    test_conv2d_transpose_infer_type()
-    test_conv2d_transpose_run()
-    test_conv2d_run()
-    test_conv2d_winograd()
-    test_bitserial_conv2d_infer_type()
-    test_batch_flatten()
-    test_upsampling()
-    test_conv2d_int8_intrinsics()
+    test_pool3d()
+    # test_pool2d()
+    # test_avg_pool2d_no_count_pad()
+    # test_lrn()
+    # test_l2_normalize()
+    # test_conv2d_infer_type()
+    # test_bitpack_infer_type()
+    # test_upsampling_infer_type()
+    # test_flatten_infer_type()
+    # test_pad_infer_type()
+    # test_pad_run()
+    # test_conv2d_transpose_infer_type()
+    # test_conv2d_transpose_run()
+    # test_conv2d_run()
+    # test_conv2d_winograd()
+    # test_bitserial_conv2d_infer_type()
+    # test_batch_flatten()
+    # test_upsampling()
+    # test_conv2d_int8_intrinsics()

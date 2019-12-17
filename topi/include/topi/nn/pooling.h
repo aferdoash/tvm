@@ -168,6 +168,151 @@ inline Tensor pool_impl(const Tensor& x,
   }
 }
 
+/*!
+* \brief Perform pooling on height and width dimension of data.
+*
+* \param x The input tensor
+* \param kernel_size Vector of three ints: {kernel_depth, kernel_height, kernel_width}
+* \param stride_size Vector of three ints: {stride_depth, stride_height, stride_width}
+* \param padding_size Vector of three ints: {padding_depth, padding_height, padding_width}
+* \param pool_type The type of pooling operator
+* \param ceil_mode Whether to use ceil when calculating the output size
+* \param depth_axis index of the depth dimension
+* \param height_axis index of the height dimension
+* \param width_axis index of the width dimension
+* \param count_include_pad Whether include padding in the calculation
+*
+* \return The output tensor in same layout order
+*/
+inline Tensor pool_impl_3d(const Tensor& x,
+                        const Array<Expr>& kernel_size,
+                        const Array<Expr>& stride_size,
+                        const Array<Expr>& padding_size,
+                        PoolType pool_type,
+                        bool ceil_mode,
+                        const size_t depth_axis,
+                        const size_t height_axis,
+                        const size_t width_axis,
+                        bool count_include_pad) {
+  CHECK(x->shape.size() >= 3) << "Pooling input must >= 3-D (D, H, W)";
+  CHECK_EQ(kernel_size.size(), 3) << "Pooling kernel_size must have 2 elements";
+  CHECK_EQ(stride_size.size(), 3) << "Pooling stride_size must have 2 elements";
+  CHECK_EQ(padding_size.size(), 6) << "Pooling padding_size must have 4 elements";
+
+  auto kernel_depth = cast(Int(32), kernel_size[0]);
+  auto kernel_height = cast(Int(32), kernel_size[1]);
+  auto kernel_width = cast(Int(32), kernel_size[2]);
+  auto stride_depth = cast(Int(32), stride_size[0]);
+  auto stride_height = cast(Int(32), stride_size[1]);
+  auto stride_width = cast(Int(32), stride_size[2]);
+
+  auto depth = x->shape[depth_axis];
+  auto height = x->shape[height_axis];
+  auto width = x->shape[width_axis];
+
+  auto pad_backward = cast(Int(32), padding_size[0]);
+  auto pad_top = cast(Int(32), padding_size[1]);
+  auto pad_left = cast(Int(32), padding_size[2]);
+  auto pad_forward = cast(Int(32), padding_size[3]);
+  auto pad_bottom = cast(Int(32), padding_size[4]);
+  auto pad_right = cast(Int(32), padding_size[5]);
+
+  if (ceil_mode) {
+    // Additional padding to ensure we do ceil instead of floor when
+    // dividing by stride.
+    pad_forward += stride_depth - 1;
+    pad_bottom += stride_height - 1;
+    pad_right += stride_width - 1;
+  }
+
+  Array<Expr> pad_before(std::vector<Expr>(x->shape.size(), 0));
+  pad_before.Set(depth_axis, pad_backward);
+  pad_before.Set(height_axis, pad_top);
+  pad_before.Set(width_axis, pad_left);
+
+  Array<Expr> pad_after(std::vector<Expr>(x->shape.size(), 0));
+  pad_after.Set(depth_axis, pad_forward);
+  pad_after.Set(height_axis, pad_bottom);
+  pad_after.Set(width_axis, pad_right);
+
+  auto out_depth = tvm::ir::Simplify(
+      indexdiv(depth - kernel_depth + pad_backward + pad_forward, stride_depth) + 1);
+  auto out_height = tvm::ir::Simplify(
+      indexdiv(height - kernel_height + pad_top + pad_bottom, stride_height) + 1);
+  auto out_width = tvm::ir::Simplify(
+      indexdiv(width - kernel_width + pad_left + pad_right, stride_width) + 1);
+
+  auto ddepth = tvm::reduce_axis(Range(0, kernel_depth));
+  auto dheight = tvm::reduce_axis(Range(0, kernel_height));
+  auto dwidth = tvm::reduce_axis(Range(0, kernel_width));
+
+  Array<Expr> out_shape = x->shape;
+  out_shape.Set(depth_axis, out_depth);
+  out_shape.Set(height_axis, out_height);
+  out_shape.Set(width_axis, out_width);
+
+  const int64_t *padding_d0 = as_const_int(pad_backward);
+  const int64_t *padding_h0 = as_const_int(pad_top);
+  const int64_t *padding_w0 = as_const_int(pad_left);
+  const int64_t *padding_d1 = as_const_int(pad_forward);
+  const int64_t *padding_h1 = as_const_int(pad_bottom);
+  const int64_t *padding_w1 = as_const_int(pad_right);
+  const bool do_pad = ((padding_d0 && *padding_d0) || (padding_h0 && *padding_h0) || (padding_w0 && *padding_w0)) ||
+                      ((padding_d1 && *padding_d1) || (padding_h1 && *padding_h1) || (padding_w1 && *padding_w1));
+
+  if (pool_type == kMaxPool) {
+    auto temp = do_pad ? pad(x, pad_before, pad_after, x->dtype.min(), "pad_temp") : x;
+    return tvm::compute(out_shape, [&](const Array<Var>& output) {
+      Array<Expr> indices;
+      for (const Var& var : output) indices.push_back(var);
+      indices.Set(depth_axis, output[depth_axis] * stride_depth + ddepth);
+      indices.Set(height_axis, output[height_axis] * stride_height + dheight);
+      indices.Set(width_axis, output[width_axis] * stride_width + dwidth);
+      return tvm::max(temp(indices), { ddepth, dheight, dwidth });
+    }, "tensor", "pool_max");
+  } else if (pool_type == kAvgPool) {
+    // Pad the inputs
+    auto temp = do_pad ? pad(x, pad_before, pad_after, 0, "pad_temp") : x;
+
+    // TVM compute for summing the pooling window.
+    auto pool_sum = tvm::compute(out_shape,
+    [&](const Array<Var>& output) {
+      Array<Expr> indices;
+      for (const Var& var : output) indices.push_back(var);
+      indices.Set(depth_axis, output[depth_axis] * stride_depth + ddepth);
+      indices.Set(height_axis, output[height_axis] * stride_height + dheight);
+      indices.Set(width_axis, output[width_axis] * stride_width + dwidth);
+      return tvm::sum(temp(indices), { ddepth, dheight, dwidth });
+    }, "tensor", "pool_sum");
+
+    // TVM compute for dividing the reduced window sum by kernel size.
+    return tvm::compute(out_shape,
+    [&](const Array<Var>& output) {
+      Array<Expr> indices;
+      for (const Var& var : output) indices.push_back(var);
+      if (count_include_pad) {
+        return div(pool_sum(indices), (kernel_depth * kernel_height * kernel_width));
+      } else {
+        Expr d_start = output[depth_axis] * stride_depth - pad_backward;
+        Expr h_start = output[height_axis] * stride_height - pad_top;
+        Expr w_start = output[width_axis] * stride_width - pad_left;
+        Expr d_end = ir::Min::make(d_start + kernel_depth, depth);
+        Expr h_end = ir::Min::make(h_start + kernel_height, height);
+        Expr w_end = ir::Min::make(w_start + kernel_width, width);
+        d_start = ir::Max::make(d_start, make_const(Int(32), 0));
+        h_start = ir::Max::make(h_start, make_const(Int(32), 0));
+        w_start = ir::Max::make(w_start, make_const(Int(32), 0));
+        Expr divide_factor = ir::Max::make((d_end - d_start) * (h_end - h_start) * (w_end - w_start),
+                                           make_const(Int(32), 1));
+        return div(pool_sum(indices), divide_factor);
+      }
+    }, "tensor", kElementWise);
+  } else {
+    LOG(ERROR) << "Unrecognized pool_type: " << pool_type;
+    return x;
+  }
+}
+
 inline Tensor pool_grad_impl(const Tensor& out_grad, const Tensor& x,
                              const Array<Expr>& kernel_size, const Array<Expr>& stride_size,
                              const Array<Expr>& padding_size, PoolType pool_type, bool ceil_mode,
@@ -351,6 +496,35 @@ inline bool find_height_width(const std::string& layout,
   return true;
 }
 
+inline bool find_depth_height_width(const std::string& layout,
+                              int* depth_axis,
+                              int* height_axis,
+                              int* width_axis) {
+  *depth_axis = -1, *height_axis = -1, *width_axis = -1;
+  int curr_idx = 0;
+  for (size_t i = 0; i < layout.size(); ++i) {
+    if ((layout[i] >= 'A' && layout[i] <= 'Z') ||
+        (layout[i] >= 'a' && layout[i] <= 'z')) {
+      if (layout[i] == 'D') {
+        if (*depth_axis != -1) return false;
+        *depth_axis = curr_idx;
+      } else if (layout[i] == 'H') {
+        if (*height_axis != -1) return false;
+        *height_axis = curr_idx;
+      } else if (layout[i] == 'W') {
+        if (*width_axis != -1) return false;
+        *width_axis = curr_idx;
+      } else if (layout[i] == 'd' || layout[i] == 'h' || layout[i] == 'w') {
+        // do not support split on depth, height or width, e.g., NCDHW16w
+        return false;
+      }
+      ++curr_idx;
+    }
+  }
+  if (*depth_axis == -1 || *height_axis == -1 || *width_axis == -1) return false;
+  return true;
+}
+
 /*!
 * \brief Perform pooling on height and width dimension of data.
 *        It decides the height and width dimension according to the layout string,
@@ -393,6 +567,51 @@ inline Tensor pool(const Tensor& x,
     << "Unsupported layout " << layout;
   return pool_impl(x, kernel_size, stride_size, padding_size,
                    pool_type, ceil_mode, height_axis, width_axis,
+                   count_include_pad);
+}
+
+/*!
+* \brief Perform pooling on depth, height and width dimension of data.
+*        It decides the depth, height and width dimension according to the layout string,
+*        in which 'D', W' and 'H' means depth, width and height respectively.
+*        Depth, Width and height dimension cannot be split.
+*        For example, NCDHW, NCDHW16c, etc. are valid for pool,
+*        while NCDHW16d, NCDHW16w, NCDHW16h are not.
+*        See \a layout for more information of the layout string convention.
+* \param x The input tensor.
+* \param kernel_size Vector of three ints: {kernel_depth, kernel_height, kernel_width}
+* \param stride_size Vector of three ints: {stride_depth, stride_height, stride_width}
+* \param padding_size Vector of three ints: {padding_depth, padding_height, padding_width}
+* \param pool_type The type of pooling operator
+* \param ceil_mode Whether to use ceil when calculating the output size
+* \param layout The input layout. Pooling supports any layout as long as 'D', 'H' and 'W' appear.
+*        The layout is supposed to be composed of upper cases, lower cases and (optional) numbers,
+*        where upper case indicates a dimension and
+*        the corresponding lower case (with factor size) indicates the split dimension.
+*        For example, NCDHW16c can describe a 5-D tensor of
+*        [batch_size, channel, depth, height, width, channel_block].
+*        (in which factor size `16` will not be used in pooling but for other operators,
+*        it can be used to decide the output shape).
+*        Since pooling does not care about the factor size of dimensions
+*        other than `D`, `H` and `W`, one can pass `NCDHWc` as well.
+* \param  count_include_pad Whether include padding in the calculation when pool_type is 'avg'
+*
+*
+* \return The output tensor in the same layout
+*/
+inline Tensor pool3d(const Tensor& x,
+                   const Array<Expr>& kernel_size,
+                   const Array<Expr>& stride_size,
+                   const Array<Expr>& padding_size,
+                   PoolType pool_type,
+                   bool ceil_mode,
+                   const std::string& layout = "NCDHW",
+                   bool count_include_pad = true) {
+  int depth_axis = -1, height_axis = -1, width_axis = -1;
+  CHECK(find_depth_height_width(layout, &depth_axis, &height_axis, &width_axis))
+    << "Unsupported layout " << layout;
+  return pool_impl_3d(x, kernel_size, stride_size, padding_size,
+                   pool_type, ceil_mode, depth_axis, height_axis, width_axis,
                    count_include_pad);
 }
 

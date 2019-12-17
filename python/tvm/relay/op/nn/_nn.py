@@ -308,6 +308,16 @@ def schedule_avg_pool2d(attrs, outs, target):
 
 reg.register_pattern("nn.avg_pool2d", OpPattern.OUT_ELEMWISE_FUSABLE)
 
+# max_pool3d
+@reg.register_schedule("nn.max_pool3d")
+def schedule_max_pool3d(attrs, outs, target):
+    """Schedule definition of max_pool3d"""
+    layout = attrs.layout
+    with target:
+        return topi.generic.schedule_pool(outs, layout)
+
+
+reg.register_pattern("nn.max_pool3d", OpPattern.OUT_ELEMWISE_FUSABLE)
 
 # max_pool2d_grad
 @reg.register_schedule("nn.max_pool2d_grad")
@@ -861,6 +871,44 @@ def pool2d_shape_func(attrs, inputs, _):
 
 reg.register_shape_func("nn.max_pool2d", False, pool2d_shape_func)
 reg.register_shape_func("nn.avg_pool2d", False, pool2d_shape_func)
+
+@script
+def _pool3d_shape_func(data_shape, pool_size, strides,
+                       padding, depth_axis, height_axis, width_axis):
+    out = output_tensor((data_shape.shape[0],), "int64")
+    for i in const_range(data_shape.shape[0]):
+        if i == depth_axis:
+            out[i] = (data_shape[i] + padding[0] + padding[3] - pool_size[0]) // strides[0] + 1
+        if i == height_axis:
+            out[i] = (data_shape[i] + padding[1] + padding[4] - pool_size[1]) // strides[1] + 1
+        elif i == width_axis:
+            out[i] = (data_shape[i] + padding[2] + padding[5] - pool_size[2]) // strides[2] + 1
+        else:
+            out[i] = data_shape[i]
+
+    return out
+
+def pool3d_shape_func(attrs, inputs, _):
+    """
+    Shape function for pool3d op.
+    """
+    pool_size = get_const_tuple(attrs.pool_size)
+    strides = get_const_tuple(attrs.strides)
+    padding = get_const_tuple(attrs.padding)
+    layout = attrs.layout
+    depth_axis = layout.index("D")
+    height_axis = layout.index("H")
+    width_axis = layout.index("W")
+    if len(padding) == 1:
+        padding = [padding[0]] * 6
+    elif len(padding) == 3:
+        padding = [padding[0], padding[1], padding[2], padding[0], padding[1], padding[2]]
+
+    return [_pool3d_shape_func(inputs[0], convert(pool_size),
+                               convert(strides), convert(padding),
+                               convert(depth_axis), convert(height_axis), convert(width_axis))]
+
+reg.register_shape_func("nn.max_pool3d", False, pool3d_shape_func)
 
 @script
 def _global_pool2d_shape_func(data_shape, height_axis, width_axis):
