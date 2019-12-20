@@ -530,6 +530,13 @@ TVM_REGISTER_GLOBAL("topi.nn.adaptive_pool")
                           args[3]);
 });
 
+TVM_REGISTER_GLOBAL("topi.nn.pool3d")
+.set_body([](TVMArgs args, TVMRetValue *rv) {
+  *rv = nn::pool3d(args[0], args[1], args[2], args[3],
+                   static_cast<nn::PoolType>(static_cast<int>(args[4])),
+                   args[5], args[6], args[7]);
+  });
+
 /* Ops from nn/softmax.h */
 TVM_REGISTER_GLOBAL("topi.nn.softmax")
 .set_body([](TVMArgs args, TVMRetValue *rv) {

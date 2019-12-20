@@ -339,14 +339,12 @@ def _test_pool2d(opfunc, reffunc):
         tvm.testing.assert_allclose(op_res1.asnumpy(), ref_res, rtol=1e-5, atol=1e-5)
 
 def _test_pool3d(opfunc, reffunc):
-    print("1111111111111")
     n, c, d, h, w = tvm.var("n"), 10, 20, 224, 224
     x = relay.var("x", relay.TensorType((n, c, d, h, w), "float32"))
     y = opfunc(x, pool_size=(1, 1, 1))
     assert "pool_size=" in y.astext()
     yy = run_infer_type(y)
     assert yy.checked_type == relay.TensorType((n, 10, 20, 224, 224), "float32")
-    print("2222222222222222222")
     # test execution
     dtype = "float32"
     dshape = (1, 3, 4, 28, 28)
@@ -784,7 +782,6 @@ def test_bitpack_infer_type():
 
 
 if __name__ == "__main__":
-    test_pool3d()
     # test_pool2d()
     # test_avg_pool2d_no_count_pad()
     # test_lrn()
@@ -803,3 +800,4 @@ if __name__ == "__main__":
     # test_batch_flatten()
     # test_upsampling()
     # test_conv2d_int8_intrinsics()
+    test_pool3d()

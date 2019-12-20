@@ -77,11 +77,11 @@ def _dimension_constraint():
         return False
     return _dim_check, "Only 2d kernel supported."
 
-def _dimension_picker3d(prefix, surfix=''):
+def _dimension_picker3d(prefix, suffix=''):
     def _impl(attr):
         kernel = attr['kernel_shape']
         if len(kernel) == 3:
-            return prefix + '3d' + surfix
+            return prefix + '3d' + suffix
         raise tvm.error.OpAttributeInvalid(
             'Only 3D kernels are supported for operator {}'.format(prefix + '3d'))
     return _impl
@@ -1527,7 +1527,7 @@ _convert_map = {
     'MatMul'                            : _matmul(),
     'Max'                               : _reduce('max'),
     'MaxPool'                           : _pooling('max_pool'),
-    'MaxPool3d'                         : _pooling3d('max_pool3d'),
+    'MaxPool3D'                         : _pooling3d('max_pool'),
     'Maximum'                           : _elemwise('maximum'),
     'Mean'                              : _mean(),
     'Min'                               : _reduce('min'),
@@ -2099,6 +2099,9 @@ class GraphProto(object):
         self._prelude = Prelude(self._mod)
 
     def from_tensorflow(self, graph, layout="NHWC", shape=None, outputs=None):
+        print("66666666666666666666")
+        print("777777777777",layout)
+
         """Construct relay nodes from tensorflow graph definition - GraphDef.
 
         Follow the tensorflow graph definition to parse and convert it to Relay.
@@ -2148,6 +2151,8 @@ class GraphProto(object):
         if missing_operators:
             raise NotImplementedError( \
                 "The following operators are not implemented: {}".format(missing_operators))
+        else:
+            print("888888888 operator is implemented")
 
         control_flow_node_map = defaultdict(set)
         for node in graph.node:
@@ -2181,6 +2186,7 @@ class GraphProto(object):
                     warnings.warn("Ignore the passed shape. Shape in graphdef "
                                   "will be used for operator %s." % node.name)
 
+        print("10101010000000000000")
         # Parse the nodes to re-create TF graph using Relay operators.
         for node in graph.node:
             # Tensorflow doesn't have separate list for params extraction.
@@ -2214,6 +2220,7 @@ class GraphProto(object):
                 attr = self._parse_attr(node.attr)
 
             elif node.op != "Placeholder" and node.op != 'PlaceholderWithDefault':
+                print("111111111111111111111111")
                 # Pass the parsed shapes instead
                 attr["_output_shapes"] = output_shapes = self._output_shapes[node.name]
 
@@ -2225,6 +2232,7 @@ class GraphProto(object):
 
                 # Fill shapes for all inputs in a list
                 inputs = []
+                print("1212121212          ",output_shapes)
                 for i in node.input:
                     # Some TensorFlow operators internally maintain execution layers
                     # and their output name includes the layer number along with
@@ -2235,6 +2243,7 @@ class GraphProto(object):
                     # and the lack of the number implies 0.
                     tensor_name = i.split(':')
                     node_name = tensor_name[0]
+                    print("1313131313 ",node_name)
                     if node_name in self._nodes:
                         in_sym = self._nodes[node_name]
                         if isinstance(in_sym, _expr.TupleWrapper):
@@ -2244,16 +2253,18 @@ class GraphProto(object):
                         else:
                             tensor_slot = 0
                             input_shape = self._output_shapes[node_name][0]
+                        print(input_shape)
                         inputs.append(in_sym[0])
                         input_shapes[in_sym[0]] = input_shape
 
                 attr['_input_shapes'] = input_shapes
-
+                print("1141414141414........")
                 if node.op in _control_flow_nodes:
                     op = self._convert_control_flow_operator(node, inputs,
                                                              attr,
                                                              control_flow_node_map)
                 else:
+                    print("1515151515..calling convert_operator")
                     op = self._convert_operator(node.op, inputs, attr, graph)
 
                 # Check if op is converted to param
@@ -2287,6 +2298,7 @@ class GraphProto(object):
                           or -1 in self._output_shapes[node.name][0]):
                 out_shapes = [_infer_shape(node_item, self._mod) for node_item in node_output]
                 self._output_shapes[node.name] = out_shapes
+        print("1616161616161616")
 
         out = []
         if outputs is None:
@@ -2302,7 +2314,7 @@ class GraphProto(object):
                     out.append(self._nodes[out_name][out_num])
                 else:
                     out.append(self._nodes[out_name][0])
-
+        print("17171717177777777.. out is filled now")
         #Add the RNN outputs also with 'head' nodes of the relay graph
         if self._num_rnn_layer:
             if len(self._out_rnn) == 1:
@@ -2312,7 +2324,9 @@ class GraphProto(object):
                 out.append(out_rnn)
 
         out = out[0] if len(out) == 1 else _expr.Tuple(out)
+        print("1818181818")
         func = _expr.Function(analysis.free_vars(out), out)
+        print("191919191919")
         self._mod["main"] = func
         return self._mod, self._params
 
@@ -2546,6 +2560,7 @@ class GraphProto(object):
 
     def _convert_operator(self, op_name, inputs, attrs,
                           graph, identity_list=None, convert_map=None):
+        print("33333",op_name)
         """Convert from Tensorflow operator to relay operator.
         The converter must specify conversions explicitly for incompatible name, and
         apply handlers to operator attributes.
@@ -2589,6 +2604,7 @@ class GraphProto(object):
                                              convert_map_rnn)
         else:
             raise NotImplementedError("Operator {} not implemented.".format(op_name))
+        print("4444444", sym)
         return sym
 
 
@@ -2619,5 +2635,8 @@ def from_tensorflow(graph, layout="NHWC", shape=None, outputs=None):
         Dict of converted parameters stored in tvm.ndarray format
     """
     g = GraphProto()
+    print("7894738743874873487384738748348374")
+    print("234234234234234 layout is = ", layout)
     mod, params = g.from_tensorflow(graph, layout, shape, outputs)
+    print("55555555555555555")
     return mod, params
